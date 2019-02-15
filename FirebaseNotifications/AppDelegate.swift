@@ -10,18 +10,22 @@ import UIKit
 import CoreData
 import Firebase
 import UserNotifications
+import FirebaseMessaging
 
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    
+    var inBackGround = false
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
         FirebaseApp.configure()
         registerForPushNotifications()
+        
         return true
     }
     
@@ -33,14 +37,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationDidEnterBackground(_ application: UIApplication) {
         // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
         // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
+        inBackGround = true
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
         // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
+        inBackGround = false
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        application.applicationIconBadgeNumber = 0
+
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
@@ -49,12 +57,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         self.saveContext()
     }
     
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String) {
+        print("Firebase registration token: \(fcmToken)")
+        print(messaging.apnsToken)
+        print(messaging.fcmToken)
+
+        let dataDict:[String: String] = ["token": fcmToken]
+        NotificationCenter.default.post(name: Notification.Name("FCMToken"), object: nil, userInfo: dataDict)
+        // TODO: If necessary send token to application server.
+        // Note: This callback is fired at each app startup and whenever a new token is generated.
+    }
+
+    
     func registerForPushNotifications() {
         UNUserNotificationCenter.current() // 1
             .requestAuthorization(options: [.alert, .sound, .badge]) { // 2
                 granted, error in
                 print("Permission granted: \(granted)") // 3
-                
+                Messaging.messaging().delegate = self
+                UNUserNotificationCenter.current().delegate = self
                 guard granted else { return }
                 self.getNotificationSettings()
         }
@@ -74,6 +95,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
         let token = tokenParts.joined()
         print("Device Token: \(token)")
+        print("Device Token: \(token)")
+        
+        Messaging.messaging().apnsToken = deviceToken
+        Messaging.messaging().isAutoInitEnabled = true
+        Messaging.messaging().shouldEstablishDirectChannel = true
+
+        InstanceID.instanceID().instanceID { (result, error) in
+            if let error = error {
+                print("Error fetching remote instance ID: \(error)")
+            } else if let result = result {
+                print("Remote instance ID token: \(result.token)")
+                print("Instance ID: \(result.instanceID)")
+
+//                self.instanceIDTokenMessage.text  = "Remote InstanceID token: \(result.token)"
+            }
+        }
     }
     
     func application( _ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
@@ -86,6 +123,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         fetchCompletionHandler completionHandler:
         @escaping (UIBackgroundFetchResult) -> Void
         ) {
+        
+//        if let messageID = userInfo[gcmMessageIDKey] {
+//            print("Message ID: \(messageID)")
+//        }
+//         Messaging.messaging().appDidReceiveMessage(userInfo)
+
+        
+        // Print full message.
+        
         print(userInfo)
         guard let aps = userInfo["aps"] as? [String: AnyObject] else {
             completionHandler(.failed)
@@ -93,6 +139,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         print(userInfo)
         print(aps)
+        // create the alert
+        
+    }
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        
     }
     // MARK: - Core Data stack
 
@@ -141,3 +192,56 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 }
 
+extension AppDelegate: MessagingDelegate, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {
+        print("openSettings")
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        print(response)
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        print(notification)
+    }
+    func messaging(_ messaging: Messaging, didReceive remoteMessage: MessagingRemoteMessage) {
+        print(remoteMessage.appData)
+        print(remoteMessage.messageID)
+        print(remoteMessage)
+        
+        let userInfo = remoteMessage.appData
+        
+        if inBackGround {
+            let center = UNUserNotificationCenter.current()
+            let content = UNMutableNotificationContent()
+            content.title = userInfo["title"] as? String ?? "Ride2 Alert"
+            content.body = userInfo["body"] as! String
+            
+            content.sound = UNNotificationSound.default
+            
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0,
+                                                            repeats: false)
+            
+            let date = Date()
+            let triggerDate = Calendar.current.dateComponents([.year,.month,.day,.hour,.minute,.second,], from: date)
+            
+            
+            let identifier = "UYLLocalNotification"
+            let request = UNNotificationRequest(identifier: identifier,
+                                                content: content, trigger: trigger)
+            center.add(request, withCompletionHandler: { (error) in
+                if let error = error {
+                    // Something went wrong
+                }
+            })
+        }
+
+        
+        
+        let alert = UIAlertController(title: userInfo["title"] as? String, message: userInfo["body"] as! String, preferredStyle: UIAlertController.Style.alert)
+        
+        // add an action (button)
+        alert.addAction(UIAlertAction(title: "OK", style: UIAlertAction.Style.default, handler: nil))
+        
+        // show the alert
+        window?.rootViewController?.present(alert, animated: true, completion: nil)
+    }
+}

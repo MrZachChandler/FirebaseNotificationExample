@@ -8,6 +8,8 @@ target 'FirebaseNotifications' do
   # Pods for FirebaseNotifications
 	pod 'Firebase/Core'
 	pod 'Firebase/Messaging'
+    pod 'Firebase/Core'
+    pod 'Firebase/Auth'
 
   target 'FirebaseNotificationsTests' do
     inherit! :search_paths
